@@ -1,0 +1,502 @@
+% Agentic Sleep paper draft (LaTeX version)
+% NeurIPS-ready preprint setup with article fallback for local compilation.
+%
+% Usage (preferred, NeurIPS style):
+%   Place neurips_2024.sty in this directory, then compile:
+%   pdflatex agentic_sleep_paper_draft.tex
+%
+% Usage (fallback article mode):
+%   Compile directly without neurips_2024.sty.
+
+\newif\ifneuripsstyle
+\IfFileExists{neurips_2024.sty}{\neuripsstyletrue}{\neuripsstylefalse}
+
+\ifneuripsstyle
+  \documentclass{article}
+  \usepackage[preprint]{neurips_2024}
+\else
+  \documentclass[11pt]{article}
+  \usepackage[margin=1in]{geometry}
+  \usepackage{setspace}
+  \usepackage[numbers]{natbib}
+  \onehalfspacing
+\fi
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{url}
+\usepackage{verbatim}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+\title{Agentic Sleep: Off-Cycle Memory Consolidation for Long-Horizon Autonomous Agents}
+
+\author{
+  Riyad Mehdiyev \\
+  \texttt{[affiliation / lab]} \\
+  \texttt{[email]}
+  \And
+  Collaborators \\
+  \texttt{[to be filled]}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Long-horizon autonomous agents degrade as interaction histories grow, even when large context windows are available. The primary failure mode is not only token budget exhaustion but also contextual noise: irrelevant observations, transient errors, and repeated reasoning traces that flatten action distributions and increase uncertainty. We present \textbf{Agentic Sleep}, an off-cycle memory consolidation framework that periodically converts raw interaction traces into compact heuristic rules and a lightweight semantic graph, then clears the active narrative buffer. The framework is implemented as a prototype with (i) entropy-guided sleep triggering, (ii) a three-tier memory hierarchy (short-term interaction, episodic, and long-term semantic memory), (iii) Bayesian signal/noise filtering for heuristic promotion and pruning, and (iv) a failure-seeded synthetic ``Dream'' phase for heuristic hardening.
+
+We evaluate the current implementation in a controlled simulation of long-horizon logic-game-like tasks (Codenames-like and murder-mystery-like domains) and observe improved token efficiency and higher task performance relative to a raw-context control. These results are preliminary and use a simulated policy/environment, not a production LLM backend. We provide a paper-ready experimental protocol and result tables with placeholders for future LLM-based validation.
+\end{abstract}
+
+\section{Introduction}
+
+Autonomous LLM agents are often evaluated on short-horizon tasks, yet many practical workloads (software engineering, multi-stage research, incident response, and strategic games) require coherent reasoning across tens to hundreds of turns. Contemporary agent designs frequently combine reasoning traces and tool use patterns (e.g., CoT/ReAct-style prompting) with iterative self-improvement loops \citep{wei2022cot, yao2023react, madaan2023selfrefine}. A common engineering response to long-horizon degradation is to increase context length and maintain more raw history. In practice, this introduces a different bottleneck: the model must repeatedly process stale, redundant, and low-value traces alongside task-critical evidence. The result is often semantic drift, delayed correction of invalid assumptions, and unstable action selection.
+
+This paper studies a complementary approach: \textbf{structural abstraction over raw retention}. Instead of preserving the full trajectory in the active context, the agent periodically enters an off-cycle \emph{Sleep Phase} that consolidates recent interaction logs into high-density, reusable heuristics and a semantic memory graph. The agent then resumes operation using these abstractions plus a short recency window, rather than the full narrative history.
+
+The central claim is that, for long-horizon tasks, a memory system that compresses \emph{what works} into reusable procedural rules can outperform a raw-context baseline in both token efficiency and task success.
+
+\section{Problem Statement}
+
+Let an autonomous agent operate over a sequence of turns $t = 1, \dots, T$. At each turn, it receives observations, produces reasoning traces, chooses an action, and obtains a task outcome. In raw-context architectures, the agent carries an increasingly long transcript into subsequent decisions. As the transcript grows, task-irrelevant tokens accumulate and the effective signal-to-noise ratio decreases.
+
+We define the operational problem as:
+
+\begin{itemize}[leftmargin=1.25em]
+\item Maintain or improve decision quality over long horizons.
+\item Reduce inference token cost relative to full-history control.
+\item Prevent repeated integration of transient errors into long-term strategy.
+\item Preserve historical lineage when knowledge changes (e.g., contradictory facts).
+\end{itemize}
+
+\section{Agentic Sleep Framework}
+
+\subsection{Overview}
+
+Agentic Sleep introduces a cyclical control loop:
+
+\begin{enumerate}[leftmargin=1.25em]
+\item \textbf{Waking Phase}: The agent performs the task using recency memory plus top-ranked heuristics.
+\item \textbf{Trigger Check}: Sleep is triggered by elapsed turns and/or an entropy spike.
+\item \textbf{Consolidation Phase}: Recent traces are converted into heuristic rules and semantic graph edges.
+\item \textbf{Dream Phase}: Newly consolidated rules are stress-tested in synthetic counterfactual scenarios.
+\item \textbf{Structural Reset}: The narrative buffer is cleared while compact rules and semantic summaries are retained.
+\end{enumerate}
+
+\subsection{Memory Hierarchy}
+
+The prototype implements a three-tier memory hierarchy:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Tier 1: Short-Term Interaction Memory (STIM)} --- linear buffer of recent \texttt{EpisodeStep} objects used for recency-sensitive decisions.
+\item \textbf{Tier 2: Mid-Term Episodic Memory (MTEM)} --- structured episodes formed by flushing STIM during sleep cycles.
+\item \textbf{Tier 3: Long-Term Semantic Memory (LTSM)} --- a heuristic rule store plus a lightweight bi-temporal knowledge graph.
+\end{itemize}
+
+This design allows the agent to preserve recency, store audit-ready episodes, and maintain abstract strategic knowledge separately.
+
+\subsection{Entropy-Guided Sleep Trigger}
+
+The framework tracks Shannon entropy over the action probability distribution at each turn. Rising entropy is treated as a proxy for uncertainty or drift. Sleep can be triggered by:
+
+\begin{itemize}[leftmargin=1.25em]
+\item a fixed interval (e.g., every 10 turns), or
+\item an entropy spike above threshold $\Delta H > \tau$, with a minimum gap to prevent thrashing.
+\end{itemize}
+
+This creates an adaptive reset mechanism: the agent consolidates when its decision distribution becomes unstable, not only on a rigid schedule.
+
+In the current prototype, entropy is computed over action distributions rather than token distributions; the final LLM evaluation will replace this with next-token (or action-logit) entropy when provider outputs support it. The uncertainty metric follows Shannon entropy as a general measure of distributional uncertainty \citep{shannon1948mathematical}.
+
+\section{Consolidation Mechanism}
+
+\subsection{Input Representation}
+
+Each interaction step is recorded as an \texttt{EpisodeStep} containing:
+
+\begin{itemize}[leftmargin=1.25em]
+\item turn index
+\item domain label
+\item compact thought trace (logging artifact)
+\item selected action
+\item observation/outcome string
+\item success flag
+\item entropy
+\item semantic tags
+\end{itemize}
+
+STIM is flushed into an \texttt{Episode} during sleep. Episodes are retained in MTEM for traceability and future analysis.
+
+\subsection{Heuristic Extraction}
+
+The consolidation engine transforms episodic traces into procedural heuristics of the form:
+
+\begin{quote}
+When observing tag set $X$, prefer action $A$.
+\end{quote}
+
+In the current prototype, heuristics are stored as $(\text{action}, \text{tag})$ rules with Bayesian success statistics:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \texttt{alpha}, \texttt{beta} initialize a Beta posterior
+\item $p_{\text{success}} = \alpha / (\alpha + \beta)$
+\item \texttt{support} tracks empirical evidence count
+\item \texttt{repetitiveness} estimates low-information repetition in retained examples
+\end{itemize}
+
+This supports signal selection and pruning without requiring gradient updates.
+
+\subsection{Signal vs.\ Noise Selection}
+
+After procedure extraction, rules are categorized:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Promote (signal)} if posterior success exceeds a threshold and repetitiveness remains below a threshold.
+\item \textbf{Prune (noise)} if support is sufficient but posterior success is consistently low.
+\end{itemize}
+
+This operationalizes the noise-signal dilemma in a lightweight Bayesian filter.
+
+\subsection{Bi-Temporal Semantic Graph}
+
+The long-term semantic memory also stores fact-like edges with timestamps:
+
+\begin{itemize}[leftmargin=1.25em]
+\item system-time creation/expiration
+\item validity/invalidation timestamps
+\item provenance episode ID
+\end{itemize}
+
+When a new edge contradicts an active edge with the same $(\text{subject}, \text{predicate})$, the previous edge is invalidated rather than deleted. This preserves lineage while maintaining an active current view of semantic memory.
+
+\section{Dream Phase: Failure-Seeded Synthetic Hardening}
+
+After consolidation, the Dream phase performs internal synthetic tests on top heuristics.
+
+\subsection{Failure Seeding}
+
+Dream uses recent failed steps (and optionally high-entropy steps) as seeds. Seed tags define the neighborhoods where the agent's current strategy appears brittle.
+
+\subsection{Counterfactual Simulation}
+
+For each supported top-ranked rule, the simulator samples counterfactual tags (preferably from failure seeds) and evaluates whether the rule still appears successful under nearby conditions. This produces synthetic support and synthetic success counts.
+
+\subsection{Confidence Update}
+
+Each rule's confidence is updated by mixing:
+
+\begin{itemize}[leftmargin=1.25em]
+\item empirical posterior success (from waking episodes), and
+\item synthetic success rate (from Dream self-play)
+\end{itemize}
+
+This changes future rule influence without rewriting the raw episodic record.
+
+\section{Prototype Implementation}
+
+The current implementation is a runnable research prototype in Python (stdlib-only), designed to later accept a real LLM backend. The orchestration is LangGraph-inspired, using a cyclic state machine with conditional routing and memory-aware state transitions \citep{langgraph_docs}. Key modules:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \texttt{agentic\_sleep/engine.py}: agent loop, scoring, entropy, triggers, sleep cycle
+\item \texttt{agentic\_sleep/memory.py}: STIM/MTEM/LTSM hierarchy
+\item \texttt{agentic\_sleep/consolidation.py}: heuristic extraction, graph updates, HCR computation
+\item \texttt{agentic\_sleep/dream.py}: synthetic hardening
+\item \texttt{agentic\_sleep/experiment.py}: control vs.\ sleep benchmark harness
+\item \texttt{agentic\_sleep/langgraph\_adapter.py}: optional LangGraph-compatible graph skeleton
+\end{itemize}
+
+\subsection{Decision Policy (Current Prototype)}
+
+The current agent policy is simulated (not an LLM) and combines:
+
+\begin{itemize}[leftmargin=1.25em]
+\item heuristic contributions from LTSM (sleep mode only),
+\item recent episodic evidence from raw or STIM history,
+\item a context-noise penalty that increases with effective context size,
+\item a stochastic sampling step over normalized action scores.
+\end{itemize}
+
+This setup is intentionally simple: it isolates memory architecture effects before integrating external model variability.
+
+\section{Related Work and Positioning}
+
+Agentic Sleep is adjacent to, but distinct from, several lines of prior work. Reflexion-style agents use verbal feedback to improve subsequent attempts, storing textual reflections as episodic memory \citep{shinn2023reflexion}. Agentic Sleep differs by moving consolidation to an off-cycle phase that restructures memory into heuristics and semantic graph edges, and by explicitly pruning low-value procedures. MemGPT emphasizes paging and virtual memory management for raw information across memory tiers \citep{packer2023memgpt}; our framework instead prioritizes trajectory abstraction into procedural rules. Recursive summarization compresses long histories into compact narratives \citep{wang2023recursive_summary_memory}; Agentic Sleep replaces narrative summaries with condition-action heuristics to improve reuse across task instances.
+
+At the prompting level, our framework is compatible with CoT/ReAct style traces and self-refinement loops \citep{wei2022cot, yao2023react, madaan2023selfrefine}. The contribution is therefore primarily architectural: an explicit off-cycle consolidation and hardening mechanism with measurable compression and efficiency metrics.
+
+\section{Experimental Protocol (Current Prototype)}
+
+\subsection{Task Environments}
+
+We evaluate on synthetic long-horizon task families designed to mimic logic-heavy coordination and deduction:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Codenames-like domain}: clueing/guessing strategy abstractions and ambiguity management
+\item \textbf{Murder-mystery-like (MMG) domain}: contradiction checking, timeline reconstruction, scene reinspection
+\end{itemize}
+
+Each turn is represented by a tag set and a hidden best action. Difficulty and distractor tags create ambiguity.
+
+\subsection{Real Benchmark Tasks and Environments (Final Evaluation Plan)}
+
+Beyond the synthetic domains used for prototype validation, the final study should evaluate Agentic Sleep on executable and contamination-aware benchmarks:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Software engineering issue resolution}: SWE-bench / SWE-bench Lite / SWE-bench Verified for repository-level bug fixing with execution-based validation \citep{jimenez2024swebench}.
+\item \textbf{Code generation and repair micro-benchmarks}: HumanEval-style problems for fast iteration and ablations on memory/control decisions \citep{chen2021codex}.
+\item \textbf{Interactive tool-using environments}: ReAct-style benchmark environments (e.g., ALFWorld/WebShop-style setups) to test long-horizon memory under observation-action loops \citep{yao2023react}.
+\end{itemize}
+
+In this repository, we provide a benchmark-file adapter (JSON/JSONL replay format) so real environment trajectories can be converted into turn-level evaluation instances and replayed under matched control vs.\ sleep conditions. This enables a clean transition from the current synthetic testbed to real agent traces without rewriting the core memory pipeline.
+
+\subsection{Comparison Conditions}
+
+\paragraph{Control (Raw Context).}
+\begin{itemize}[leftmargin=1.25em]
+\item Retains full raw trajectory for scoring
+\item No consolidation
+\item No sleep/dream phase
+\end{itemize}
+
+\paragraph{Sleep (Agentic Sleep).}
+\begin{itemize}[leftmargin=1.25em]
+\item Uses STIM + top heuristics + LTSM summaries
+\item Triggers sleep by interval and entropy spike
+\item Consolidates and runs Dream hardening
+\item Clears active narrative buffer post-sleep
+\end{itemize}
+
+\subsection{Metrics}
+
+Primary metrics:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Win Rate}
+\item \textbf{Deductive Accuracy}
+\item \textbf{Token Budget} (approximate inference token accounting)
+\item \textbf{Heuristic Compression Ratio (HCR)}
+\begin{equation}
+\mathrm{HCR} = \frac{\mathrm{tokens}(\mathrm{raw\ traces})}{\mathrm{tokens}(\mathrm{consolidated\ heuristics + summaries})}
+\end{equation}
+\item \textbf{Consolidation Efficiency}
+\begin{equation}
+E_c = \frac{S_{\mathrm{sleep}} - S_{\mathrm{control}}}{B_{\mathrm{sleep}} / B_{\mathrm{control}}}
+\end{equation}
+where $S$ is success (here: win rate) and $B$ is token budget.
+\end{itemize}
+
+\section{Preliminary Results (Simulation Only; Non-LLM)}
+
+The following run was produced by the current prototype:
+
+\begin{verbatim}
+python3 -m agentic_sleep.cli --games 20 --turns 50
+\end{verbatim}
+
+\subsection{Aggregate Results}
+
+\begin{table}[t]
+\centering
+\caption{Aggregate prototype results (simulation only; non-LLM).}
+\label{tab:aggregate-results}
+\begin{tabular}{lrr}
+\toprule
+Metric & Control & Sleep \\
+\midrule
+Games & 40 & 40 \\
+Win Rate & 0.325 & 0.475 \\
+Deductive Accuracy & 0.551 & 0.601 \\
+Avg Entropy & 0.673 & 0.246 \\
+Token Budget & 136,429,271 & 28,372,395 \\
+Sleep Cycles & 0 & 9 \\
+Consolidations & 0 & 9 \\
+Avg HCR & N/A & 7.49 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Derived metric:
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Consolidation Efficiency $E_c$}: \textbf{0.721}
+\end{itemize}
+
+\subsection{Domain Breakdown}
+
+\begin{table}[t]
+\centering
+\caption{Domain-level prototype results (simulation only; non-LLM).}
+\label{tab:domain-breakdown}
+\begin{tabular}{lrrrr}
+\toprule
+Domain & Ctrl Win & Sleep Win & Ctrl Acc & Sleep Acc \\
+\midrule
+Codenames-like & 0.25 & 0.55 & 0.539 & 0.627 \\
+MMG-like & 0.40 & 0.40 & 0.563 & 0.575 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Interpretation}
+
+These preliminary results support the design hypothesis in the synthetic setting:
+
+\begin{itemize}[leftmargin=1.25em]
+\item Sleep improves overall performance while reducing token cost.
+\item Entropy is lower in the sleep condition, consistent with reduced decision diffusion.
+\item Gains are strongest in the Codenames-like domain, suggesting heuristic abstraction is especially effective when recurring semantic patterns map well to strategic actions.
+\end{itemize}
+
+However, these results \textbf{do not yet validate performance on real LLM agents}. They only indicate that the memory architecture is promising under a controlled simulated policy.
+
+\section{Planned LLM-Based Evaluation (To Be Filled)}
+
+This section is intentionally structured for later insertion of real-model results.
+
+\subsection{LLM Integration Plan}
+
+Replace the simulated policy with an LLM-backed action policy while preserving the same memory pipeline:
+
+\begin{itemize}[leftmargin=1.25em]
+\item Keep STIM/MTEM/LTSM unchanged
+\item Replace the score-based action selector with:
+  \begin{itemize}[leftmargin=1.25em]
+  \item prompt construction from STIM + top rules + task state
+  \item model inference
+  \item action parsing + confidence estimation
+  \end{itemize}
+\item Use logprobs (if available) to compute entropy directly
+\item Keep the same sleep trigger, consolidation, and Dream phases
+\end{itemize}
+
+\subsection{Proposed LLM Experiment Matrix (Placeholder)}
+
+\IfFileExists{generated/llm_results_tables.tex}{
+\input{generated/llm_results_tables.tex}
+}{
+
+\begin{table}[t]
+\centering
+\caption{Placeholder table for future LLM-backed evaluation.}
+\label{tab:llm-matrix}
+\begin{tabular}{lllllllll}
+\toprule
+Model & Provider & Ctrl WR & Sleep WR & Ctrl Acc & Sleep Acc & Ctrl Tok & Sleep Tok & $E_c$ \\
+\midrule
+\texttt{[[MODEL\_A]]} & \texttt{[[PROVIDER]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} \\
+\texttt{[[MODEL\_B]]} & \texttt{[[PROVIDER]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} & \texttt{[[TBD]]} \\
+\bottomrule
+\end{tabular}
+\end{table}
+}
+
+\subsection{Statistical Validation Plan (Placeholder)}
+
+\begin{itemize}[leftmargin=1.25em]
+\item \texttt{[[N\_SEEDS]]} random seeds per model/condition
+\item Report mean $\pm$ std and confidence intervals
+\item Paired comparison over identical task instances
+\item Ablations:
+  \begin{itemize}[leftmargin=1.25em]
+  \item no Dream
+  \item no entropy trigger (interval only)
+  \item no pruning
+  \item no graph summaries (rules only)
+  \item raw summaries vs.\ heuristic rules
+  \end{itemize}
+\end{itemize}
+
+\subsection{Results Interpretation Text (Final Paper Template)}
+
+When replacing the placeholder tables with LLM-backed results, the final manuscript should include a concise interpretation subsection that reports both effect size and tradeoffs. A recommended structure is:
+
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Primary effect}: State whether Sleep improves task success and by how much (absolute and relative deltas).
+\item \textbf{Efficiency effect}: Report token budget ratio and $E_c$, clarifying whether gains come from compression, improved decisions, or both.
+\item \textbf{Uncertainty dynamics}: Compare entropy trajectories (or token-level uncertainty if available), and note whether Sleep reduces drift late in episodes.
+\item \textbf{Domain heterogeneity}: Identify domains where Sleep helps most/least and hypothesize why (e.g., recurring motifs vs.\ one-off tasks).
+\item \textbf{Ablation interpretation}: Explain whether Dream, entropy triggers, or pruning contribute materially to final gains.
+\item \textbf{Failure modes}: Note cases where Sleep harms performance (over-compression, stale heuristics, incorrect pruning) and quantify frequency.
+\end{itemize}
+
+Example reporting language (to be replaced with actual numbers): ``Across $N$ seeds on SWE-bench Lite, Agentic Sleep improved resolve rate by $X$ absolute points while reducing inference tokens to $Y\%$ of the control condition, yielding a consolidation efficiency of $E_c = Z$. Gains were concentrated in multi-file issues with recurring failure patterns, while one-shot localization-heavy tasks showed smaller improvements.''
+
+\section{Discussion}
+
+The prototype demonstrates a practical pattern: memory performance can improve by \textbf{changing representation}, not only by increasing storage. The Sleep cycle acts as an adaptive compression and reset mechanism. In the simulated setting, it reduced token budget and uncertainty while improving task outcomes.
+
+The strongest conceptual contribution is the move from:
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{Narrative retention} (``what happened'') to
+\item \textbf{Procedural retention} (``what tends to work under conditions $X$'').
+\end{itemize}
+
+This distinction matters for long-horizon agents where repeated task motifs appear across turns or sessions.
+
+\section{Limitations}
+
+This work is currently limited by the prototype setup:
+
+\begin{itemize}[leftmargin=1.25em]
+\item The decision policy is simulated and has access to a hidden ``best action'' via the environment.
+\item The tasks are synthetic proxies, not real interactive game environments.
+\item Entropy is computed over simulated action distributions, not true next-token distributions.
+\item The semantic graph is lightweight and domain-specific; richer relation extraction is not yet implemented.
+\item Dream self-play is a heuristic simulator, not a learned world model.
+\end{itemize}
+
+Therefore, current results should be treated as \textbf{architecture validation}, not definitive evidence of LLM capability gains.
+
+\section{Conclusion}
+
+Agentic Sleep provides a concrete framework for long-horizon agent stability through off-cycle consolidation, heuristic abstraction, and synthetic hardening. The current prototype demonstrates that such a design can improve performance-per-token in a controlled simulation. The next stage is direct LLM integration with the same memory loop and evaluation protocol, enabling a rigorous test of whether structural abstraction outperforms raw-context retention in real autonomous agent workloads.
+
+\appendix
+
+\section{Reproduction (Current Prototype)}
+
+Run the prototype benchmark:
+
+\begin{verbatim}
+python3 -m agentic_sleep.cli --games 20 --turns 50
+\end{verbatim}
+
+Key files:
+\begin{itemize}[leftmargin=1.25em]
+\item \texttt{agentic\_sleep/engine.py}
+\item \texttt{agentic\_sleep/consolidation.py}
+\item \texttt{agentic\_sleep/dream.py}
+\item \texttt{agentic\_sleep/memory.py}
+\item \texttt{agentic\_sleep/experiment.py}
+\end{itemize}
+
+\section{Suggested Next Fill-Ins for the LLM Version}
+
+\begin{itemize}[leftmargin=1.25em]
+\item Replace simulated \texttt{thought} string with model-generated rationale summary (optional logging only)
+\item Add logprob-based entropy extraction
+\item Add real tool traces (e.g., coding agent actions) into \texttt{EpisodeStep.tags}
+\item Persist MTEM/LTSM across sessions
+\item Evaluate on code repair / planning / debugging benchmarks
+\end{itemize}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

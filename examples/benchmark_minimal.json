@@ -1,0 +1,45 @@
+{
+  "games": [
+    {
+      "domain": "codenames_realish",
+      "game_id": 1,
+      "turns": [
+        {
+          "turn": 1,
+          "tags": ["semantic:double_meaning", "team:misread_prone", "board:clustered"],
+          "candidates": ["safe_clue", "aggressive_multi", "double_meaning", "assassin_avoid", "teammate_model"],
+          "best_action": "double_meaning",
+          "difficulty": 0.72
+        },
+        {
+          "turn": 2,
+          "tags": ["risk:assassin_near", "team:aligned", "board:sparse"],
+          "candidates": ["safe_clue", "aggressive_multi", "double_meaning", "assassin_avoid", "teammate_model"],
+          "best_action": "assassin_avoid",
+          "difficulty": 0.78
+        }
+      ]
+    },
+    {
+      "domain": "mmg_realish",
+      "game_id": 2,
+      "turns": [
+        {
+          "turn": 1,
+          "tags": ["evidence:timeline_gap", "social:contradiction", "witness:reliable"],
+          "candidates": ["cross_check_alibi", "timeline_reconstruct", "motive_probe", "contradiction_test", "scene_reinspect"],
+          "best_action": "timeline_reconstruct",
+          "difficulty": 0.75
+        },
+        {
+          "turn": 2,
+          "tags": ["scene:uninspected", "motive:unclear", "social:deflection"],
+          "candidates": ["cross_check_alibi", "timeline_reconstruct", "motive_probe", "contradiction_test", "scene_reinspect"],
+          "best_action": "scene_reinspect",
+          "difficulty": 0.81
+        }
+      ]
+    }
+  ]
+}
+

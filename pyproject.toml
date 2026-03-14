@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-sleep-prototype"
+version = "0.1.0"
+description = "Prototype implementation of Agentic Sleep for long-horizon autonomous LLM-like agents"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["agentic_sleep"]
+
